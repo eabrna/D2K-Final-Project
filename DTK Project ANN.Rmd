@@ -1,0 +1,62 @@
+---
+title: "DTK Project ANN"
+output: html_document
+date: "2024-11-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(neuralnet)
+library(rvest)
+```
+
+```{r}
+train <- read.csv("Train.csv")
+test <- read.csv("Test.csv")
+
+```
+
+```{r}
+train <- subset(train, select = -c(Sequence,Label))
+test <- subset(test, select = -c(Sequence,Label))
+train <- train[complete.cases(train),]
+test <- test[complete.cases(test),]
+train <- train %>% mutate_if(is.character, as.factor)
+test <- test %>% mutate_if(is.character, as.factor)
+```
+
+```{r}
+model = neuralnet(
+    Activity~Size+BomanI+NetCharge+HydrophobicRatio+HydrophobicMoment+Aliphatic+InstaIndex+IsoelectricPoint,
+data=train,
+hidden=c(4,2),
+linear.output = FALSE,
+stepmax=1e7
+)
+```
+```{r}
+plot(model,rep = "best")
+```
+
+```{r}
+pred <- predict(model, test)
+labels <- c("Antimicrobial","Non-Antimicrobial")
+prediction_label <- data.frame(max.col(pred)) %>%     
+mutate(pred=labels[max.col.pred.]) %>%
+select(2) %>%
+unlist()
+
+tabel = table(test$Activity, prediction_label)
+tabel
+```
+```{r}
+prop.table(tabel)
+```
+
+
+```{r}
+check = as.numeric(test$Activity) == max.col(pred)
+accuracy = (sum(check)/nrow(test))*100
+print(accuracy)
+```
+
