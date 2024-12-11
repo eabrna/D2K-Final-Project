@@ -1,0 +1,176 @@
+---
+title: "Homework 00"
+author: "Washington, George; Jefferson, Thomas; Madison, James" # <--- Please change to your names here, format: "LastName, FirstName"
+date: 'Due: Wed Aug 28 | 11:59pm'
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+**APMA 3150 \| Fall 2024 \| University of Virginia**
+
+***"On my honor, I pledge that I have neither given nor received unauthorized aid on this assignment." - The author of this RMarkdown file.***
+
+<!--- Solution Region --->
+
+```{css solution-region, echo=FALSE}
+.solution {
+    background-color: 232D4B10;
+    border-style: solid;
+    border-color: 232D4B;
+    padding: .5em;
+    margin: 20px
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document.
+
+
+
+## [Problems]{style="color:#FF7F50"}
+
+We need to first load Verzani's textbook packages `MASS`, `UsingR`, our course package `APMA3150` in our working environment. 
+```{r message=FALSE}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+### Initial data cleaning/organization
+
+#### {.solution}
+```{r}
+# Read the data
+train <- na.omit(read.csv("Train.csv", stringsAsFactors = FALSE))
+
+# Change all sequences to uppercase letters
+train$Sequence <- toupper(train$Sequence)
+
+# Rename columns
+colnames(train) <- sub("BomanI", "Boman Index", colnames(train))
+colnames(train) <- sub("InstaIndex", "Instability Index", colnames(train))
+colnames(train) <- sub("Aliphatic", "Aliphatic Index", colnames(train))
+
+# Separate dataset based on activity label
+AMP_df <- train %>% filter(Label == 1)
+nAMP_df <- train %>% filter(Label == 0)
+
+
+# Print counts
+cat(sprintf("Number of antimicrobial peptides: %d\n", nrow(AMP_df)))
+cat(sprintf("Number of non-antimicrobial peptides: %d\n", nrow(nAMP_df)))
+
+
+```
+
+### Creating bar plots to compare features by class (AMP v. non-AMP)
+
+#### {.solution}
+```{r}
+# Make the datasets equal size for better visual feature comparison
+
+# Set seed for reproducibility
+set.seed(123)  # Change the number for different random samples
+
+# Randomly select 2180 rows to remove (so samples are equal)
+rows_to_remove <- sample(nrow(AMP_df), 2180)
+
+# Create the reduced AMP_df by excluding the selected rows
+AMP_reduced <- AMP_df[-rows_to_remove, ]
+
+# Check the resulting size
+nrow(AMP_reduced) 
+
+# Calculate absolute values and averages
+nAMP_avg <- colMeans(abs(nAMP_df[, 4:11]), na.rm = TRUE)
+AMP_avg <- colMeans(abs(AMP_reduced[, 4:11]), na.rm = TRUE)
+
+# Combine the data into a dataframe for easier plotting
+features <- names(AMP_avg)
+data <- data.frame(
+  Feature = rep(features, 2),
+  AverageValue = c(AMP_avg, nAMP_avg),
+  Group = rep(c("AMP", "non-AMP"), each = length(features))
+)
+
+# Plot the data using a for loop for individual feature comparison
+par(mfrow = c(2, 4))  # Create a 2x4 layout for subplots
+for (feature in features) {
+  subset_data <- subset(data, Feature == feature)
+  barplot(
+    height = subset_data$AverageValue,
+    beside = TRUE,
+    names.arg = subset_data$Group,
+    main = feature,
+    ylab = "Average Value",
+    col = c("navy", "orange")
+  )
+}
+
+
+```
+
+
+
+
+### Correlation to understand most important features (and see if it matches expected results from above)
+#### {.solution}
+```{r}
+features <- train[, 4:11]      # subset of all features (not splitting data)
+labels <- train$Label            # Sequence labels
+
+
+# Calculate correlations
+correlation_results = sapply(features, function(feature) {
+  cor(feature, labels, method = "spearman") })
+
+
+# Convert results to a data frame for better presentation
+correlation_df <- data.frame(
+  Feature = names(correlation_results),
+  Correlation = correlation_results
+)
+
+# Sort by absolute correlation for ranking
+correlation_df <- correlation_df[order(abs(correlation_df$Correlation), decreasing = TRUE), ]
+
+# Print sorted results
+print(correlation_df)
+
+# Plotting the correlations
+library(ggplot2)
+
+ggplot(correlation_df, aes(x = reorder(Feature, abs(Correlation)), y = abs(Correlation))) +
+  geom_bar(stat = "identity", fill = "navy") +
+  coord_flip() +  # Flip for better readability
+  labs(
+    title = "Feature Correlations with Sequence Label",
+    x = "Feature",
+    y = "Correlation Coefficient"
+  ) +
+  theme_minimal()
+
+```
+Write your conclusion here...
+
+
+### 
+#### {.solution}
+```{r}
+
+
+```
+Write your conclusion here...
+
