@@ -1,0 +1,314 @@
+---
+title: "DTK Project"
+author: "Brna, Elliot; Park, Mia; Williams, Owen"
+date: "2024-11-27"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rpart)
+library(rvest)
+library(dplyr)
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(neuralnet)
+library(tidyverse)
+```
+
+### Initial data cleaning/organization
+
+#### {.solution}
+```{r}
+# Read the data
+train <- na.omit(read.csv("Train.csv", stringsAsFactors = FALSE))
+
+# Change all sequences to uppercase letters
+train$Sequence <- toupper(train$Sequence)
+
+# Rename columns
+colnames(train) <- sub("BomanI", "Boman Index", colnames(train))
+colnames(train) <- sub("InstaIndex", "Instability Index", colnames(train))
+colnames(train) <- sub("Aliphatic", "Aliphatic Index", colnames(train))
+
+# Separate dataset based on activity label
+AMP_df <- train %>% filter(Label == 1)
+nAMP_df <- train %>% filter(Label == 0)
+
+
+# Print counts
+cat(sprintf("Number of antimicrobial peptides: %d\n", nrow(AMP_df)))
+cat(sprintf("Number of non-antimicrobial peptides: %d\n", nrow(nAMP_df)))
+
+
+```
+
+### Creating bar plots to compare features by class (AMP v. non-AMP)
+
+#### {.solution}
+```{r}
+# Make the datasets equal size for better visual feature comparison
+
+# Set seed for reproducibility
+set.seed(123)  # Change the number for different random samples
+
+# Randomly select 2180 rows to remove (so samples are equal)
+rows_to_remove <- sample(nrow(AMP_df), 2180)
+
+# Create the reduced AMP_df by excluding the selected rows
+AMP_reduced <- AMP_df[-rows_to_remove, ]
+
+# Check the resulting size
+nrow(AMP_reduced) 
+
+# Calculate absolute values and averages
+nAMP_avg <- colMeans(abs(nAMP_df[, 4:11]), na.rm = TRUE)
+AMP_avg <- colMeans(abs(AMP_reduced[, 4:11]), na.rm = TRUE)
+
+# Combine the data into a dataframe for easier plotting
+features <- names(AMP_avg)
+data <- data.frame(
+  Feature = rep(features, 2),
+  AverageValue = c(AMP_avg, nAMP_avg),
+  Group = rep(c("AMP", "non-AMP"), each = length(features))
+)
+
+# Plot the data using a for loop for individual feature comparison
+par(mfrow = c(2, 4))  # Create a 2x4 layout for subplots
+for (feature in features) {
+  subset_data <- subset(data, Feature == feature)
+  barplot(
+    height = subset_data$AverageValue,
+    beside = TRUE,
+    names.arg = subset_data$Group,
+    main = feature,
+    ylab = "Average Value",
+    col = c("navy", "orange")
+  )
+}
+
+
+```
+
+
+
+
+### Correlation to understand most important features (and see if it matches expected results from above)
+#### {.solution}
+```{r}
+features <- train[, 4:11]      # subset of all features (not splitting data)
+labels <- train$Label            # Sequence labels
+
+
+# Calculate correlations
+correlation_results = sapply(features, function(feature) {
+  cor(feature, labels, method = "spearman") })
+
+
+# Convert results to a data frame for better presentation
+correlation_df <- data.frame(
+  Feature = names(correlation_results),
+  Correlation = correlation_results
+)
+
+# Sort by absolute correlation for ranking
+correlation_df <- correlation_df[order(abs(correlation_df$Correlation), decreasing = TRUE), ]
+
+# Print sorted results
+print(correlation_df)
+
+# Plotting the correlations
+library(ggplot2)
+
+ggplot(correlation_df, aes(x = reorder(Feature, abs(Correlation)), y = abs(Correlation))) +
+  geom_bar(stat = "identity", fill = "navy") +
+  coord_flip() +  # Flip for better readability
+  labs(
+    title = "Feature Correlations with Sequence Label",
+    x = "Feature",
+    y = "Correlation Coefficient"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+train <- read.csv("Train.csv")
+test <- read.csv("Test.csv")
+
+```
+
+```{r}
+train <- subset(train, select = -c(Sequence,Label))
+test <- subset(test, select = -c(Sequence,Label))
+train <- train[complete.cases(train),]
+test <- test[complete.cases(test),]
+train <- train %>% mutate(across(where(is.character), as.factor))
+test <- test %>% mutate(across(where(is.character), as.factor))
+
+
+```
+
+### Random Forest
+
+```{r}
+set.seed(42)
+
+#Train random forest model
+rf_model <- randomForest(
+  Activity ~.,
+  data = train,
+  ntree = 500,        
+  mtry = floor(sqrt(ncol(train) - 1)),  
+  importance = TRUE    
+)
+
+print(rf_model)
+```
+```{r}
+rf_pred <- predict(rf_model, newdata = test)
+
+conf_matrix_rf <- table(Predicted = rf_pred, Actual = test$Activity)
+
+rf_accuracy <- sum(diag(conf_matrix_rf)) / sum(conf_matrix_rf) * 100
+print(paste("Random Forest Accuracy:", round(rf_accuracy, 2), "%"))
+
+library(ggplot2)
+conf_df_rf <- as.data.frame(conf_matrix_rf)
+
+ggplot(conf_df_rf, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "darkorange2", high = "dodgerblue4") +
+  labs(title = "Random Forest Confusion Matrix",
+       x = "Predicted Category",
+       y = "Actual Category") +
+  theme_minimal() +
+  geom_text(aes(label = Freq), color = "black")
+```
+
+```{r}
+varImpPlot(rf_model)
+plot(rf_model, i.var = c("HydrophobicMoment", "Size", "NetCharge"))
+```
+Most important features: HydrophobicMoment, Size, NetCharge
+
+### Decision Tree
+
+```{r}
+library(tree)
+library(ggplot2)
+
+# Train a decision tree model using the 'tree' function
+set.seed(42)
+dt_model_tree <- tree(Activity ~ ., data = train)
+summary(dt_model_tree)
+
+plot(dt_model_tree)
+text(dt_model_tree, pretty = 0, cex = 0.8)
+
+dt_pred_tree <- predict(dt_model_tree, newdata = test, type = "class")
+
+conf_matrix_dt_tree <- table(Predicted = dt_pred_tree, Actual = test$Activity)
+
+conf_df_dt_tree <- as.data.frame(conf_matrix_dt_tree)
+
+ggplot(conf_df_dt_tree, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "darkorange2", high = "dodgerblue4") +
+  labs(title = "Decision Tree Confusion Matrix",
+       x = "Predicted Category",
+       y = "Actual Category") +
+  theme_minimal() +
+  geom_text(aes(label = Freq), color = "black")
+
+
+dt_tree_accuracy <- sum(diag(conf_matrix_dt_tree)) / sum(conf_matrix_dt_tree) * 100
+print(paste("Decision Tree Accuracy (tree package):", round(dt_tree_accuracy, 2), "%"))
+
+
+print(conf_matrix_dt_tree)
+
+```
+### ANN - One hidden Layer, Five Nodes
+
+
+```{r}
+set.seed(42)
+model = neuralnet(
+    Activity~Size+BomanI+NetCharge+HydrophobicRatio+HydrophobicMoment+Aliphatic+InstaIndex+IsoelectricPoint,
+data=train,
+hidden=c(5),
+linear.output = FALSE,
+stepmax=1e7
+)
+```
+
+```{r}
+plot(model,rep = "best")
+```
+
+```{r}
+#create confusion matrix
+pred <- predict(model, test)
+labels <- c("Antimicrobial","Non-Antimicrobial")
+prediction_label <- data.frame(max.col(pred)) %>%     
+mutate(pred=labels[max.col.pred.]) %>%
+select(2) %>%
+unlist()
+
+conf_matrix_rf = table(Predicted = prediction_label, Actual = test$Activity)
+conf_matrix_rf
+```
+
+```{r}
+#proportion table
+prop.table(conf_matrix_rf)
+```
+
+```{r}
+#graph confusion matrix
+library(ggplot2)
+conf_df_rf <- as.data.frame(conf_matrix_rf)
+
+ggplot(conf_df_rf, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "darkorange2", high = "dodgerblue4") +
+  labs(title = "One Hidden Layer, Five Node Neural Network",
+       x = "Predicted Category",
+       y = "Actual Category") +
+  theme_minimal() +
+  geom_text(aes(label = Freq), color = "black")
+```
+
+
+```{r}
+#get accuracy
+check = as.numeric(test$Activity) == max.col(pred)#get accuracy
+accuracy = (sum(check)/nrow(test))*100
+print(accuracy)
+```
+
+```{r}
+#finding training set accuracy
+pred <- predict(model, train)
+labels <- c("Antimicrobial","Non-Antimicrobial")
+prediction_label <- data.frame(max.col(pred)) %>%     
+mutate(pred=labels[max.col.pred.]) %>%
+select(2) %>%
+unlist()
+
+tabel = table(train$Activity, prediction_label)
+tabel
+prop.table(tabel)
+check = as.numeric(train$Activity) == max.col(pred)
+accuracy = (sum(check)/nrow(train))*100
+print(accuracy)
+```
